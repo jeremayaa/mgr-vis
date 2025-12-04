@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>CT Viewer with Label Overlay</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+      }
+      #controls {
+        margin-bottom: 20px;
+      }
+      #viewer {
+        position: relative;
+        display: inline-block;
+        border: 1px solid #ccc;
+      }
+      #ctImg {
+        display: block; /* defines container size */
+      }
+      #maskImg {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none; /* so you can still drag/select over it if needed */
+      }
+      input[type="number"] {
+        width: 100px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>CT Slice Viewer</h1>
+
+    <p>
+      Number of slices: <strong>{{ num_slices }}</strong><br />
+      Valid indices: <strong>0</strong> to <strong>{{ num_slices - 1 }}</strong>
+    </p>
+
+    <div id="controls">
+      <label for="sliceInput">Slice index:</label>
+      <input
+        id="sliceInput"
+        type="number"
+        min="0"
+        max="{{ num_slices - 1 }}"
+        value="{{ (num_slices - 1) // 2 }}"
+      />
+      <span id="sliceError" style="color: red; margin-left: 10px;"></span>
+
+      <br /><br />
+
+      <label for="labelSelect">Mask label:</label>
+      <select id="labelSelect">
+        <option value="">(None)</option>
+        {% for lbl in labels %}
+        <option value="{{ lbl.id }}">{{ lbl.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div id="viewer">
+      <!-- background CT slice -->
+      <img id="ctImg" src="" alt="CT slice" />
+      <!-- overlay mask slice -->
+      <img id="maskImg" src="" alt="Mask overlay" />
+    </div>
+
+    <script>
+      const numSlices = {{ num_slices }};
+      const sliceInput = document.getElementById("sliceInput");
+      const sliceError = document.getElementById("sliceError");
+      const labelSelect = document.getElementById("labelSelect");
+      const ctImg = document.getElementById("ctImg");
+      const maskImg = document.getElementById("maskImg");
+
+      function loadImages() {
+        const idx = parseInt(sliceInput.value, 10);
+        if (isNaN(idx) || idx < 0 || idx >= numSlices) {
+          sliceError.textContent = "Index out of range";
+          return;
+        }
+        sliceError.textContent = "";
+
+        const cacheBust = Date.now();
+
+        // Background CT slice
+        ctImg.src = "/slice_bg/" + idx + "?_=" + cacheBust;
+
+        // Mask overlay (only if label selected)
+        const labelVal = labelSelect.value;
+        if (labelVal) {
+          maskImg.style.display = "block";
+          maskImg.src =
+            "/slice_mask/" + idx + "/" + labelVal + "?_=" + cacheBust;
+        } else {
+          maskImg.style.display = "none";
+        }
+      }
+
+      // Update on slice index change
+      sliceInput.addEventListener("input", loadImages);
+
+      // Update on label selection change
+      labelSelect.addEventListener("change", loadImages);
+
+      // Initial load (middle slice, no mask)
+      window.addEventListener("load", loadImages);
+    </script>
+  </body>
+</html>
