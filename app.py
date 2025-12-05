@@ -4,6 +4,8 @@ from io import BytesIO
 from PIL import Image
 import json
 import os
+import socket
+import qrcode
 
 # ---------- Paths ----------
 IMG_PATH = os.path.join("images", "ct_volume.npy")
@@ -117,5 +119,31 @@ def slice_mask(slice_idx, label_id):
 
 
 if __name__ == "__main__":
-    # http://127.0.0.1:5000
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    # Helper: get local IP visible to your LAN (not 127.0.0.1)
+    def get_local_ip():
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # doesn't actually send data, just used to get the right interface
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        return ip
+
+    port = 5050
+    ip = get_local_ip()
+    url = f"http://{ip}:{port}/"
+
+    print("\nOpen this URL on devices in the same network:")
+    print(url)
+    print("\nScan this QR code:\n")
+
+    # Generate and print QR code in terminal
+    qr = qrcode.QRCode(border=1)
+    qr.add_data(url)
+    qr.make(fit=True)
+    # ASCII QR in terminal
+    qr.print_ascii(invert=True)  # invert=True looks better on dark terminals
+
+    # Run on all interfaces so other devices can connect
+    app.run(host="0.0.0.0", port=port, debug=False)

@@ -2,3 +2,4 @@ flask
 pillow 
 numpy
 matplotlib
+qrcode[pil]
