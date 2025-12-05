@@ -23,8 +23,7 @@
         position: absolute;
         top: 0;
         left: 0;
-        /* keep pointer-events enabled for future drawing;
-          can be pointer-events: none */
+        opacity: 0.47;
       }
       input[type="number"] {
         width: 100px;
@@ -56,9 +55,20 @@
       <select id="labelSelect">
         <option value="">(None)</option>
         {% for lbl in labels %}
-        <option value="{{ lbl.id }}">{{ lbl.name }}</option>
+        <option
+          value="{{ lbl.id }}"
+          data-color="{{ lbl.color_rgb[0] }},{{ lbl.color_rgb[1] }},{{ lbl.color_rgb[2] }}"
+        >
+          {{ lbl.name }}
+        </option>
         {% endfor %}
       </select>
+
+      <br /><br />
+
+      <button id="penBtn" type="button">Pen</button>
+      <button id="rubberBtn" type="button">Rubber</button>
+      <span id="modeIndicator" style="margin-left: 10px; font-style: italic;"></span>
     </div>
 
     <div id="viewer">
@@ -69,10 +79,10 @@
     </div>
         
     <!-- inject numSlices into a global so external JS can use it -->
+    <script src="{{ url_for('static', filename='js/mask_editor.js') }}"></script>
     <script>
       window.numSlices = {{ num_slices }};
     </script>
     <script src="{{ url_for('static', filename='js/viewer.js') }}"></script>
-
   </body>
 </html>
