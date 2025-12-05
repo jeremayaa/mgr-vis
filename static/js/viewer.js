@@ -15,6 +15,9 @@
   const rubberBtn = document.getElementById("rubberBtn");
   const modeIndicator = document.getElementById("modeIndicator");
 
+  const saveBtn = document.getElementById("saveBtn");
+  const saveStatus = document.getElementById("saveStatus");
+
   function clearMaskCanvas() {
     maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
   }
@@ -98,6 +101,10 @@
 
   // Update on label selection change
   labelSelect.addEventListener("change", function () {
+    // When changing label, drop unsaved strokes from previous label
+    if (window.MaskEditor) {
+      window.MaskEditor.clearStrokes();
+    }
     updateBrushColorFromLabel();
     loadImages();
   });
@@ -121,6 +128,61 @@
     if (window.MaskEditor) {
       window.MaskEditor.setMode("rubber");
     }
+  });
+
+  // Wire Save button
+  saveBtn.addEventListener("click", function () {
+    const idx = parseInt(sliceInput.value, 10);
+    if (isNaN(idx) || idx < 0 || idx >= numSlices) {
+      sliceError.textContent = "Index out of range";
+      return;
+    }
+
+    const labelVal = labelSelect.value;
+    if (!labelVal) {
+      saveStatus.style.color = "red";
+      saveStatus.textContent = "Select a label first";
+      return;
+    }
+
+    if (!window.MaskEditor) {
+      return;
+    }
+
+    const strokes = window.MaskEditor.getStrokes();
+    if (!strokes || !strokes.length) {
+      saveStatus.style.color = "orange";
+      saveStatus.textContent = "Nothing to save";
+      return;
+    }
+
+    saveStatus.style.color = "black";
+    saveStatus.textContent = "Saving...";
+
+    fetch(`/api/slice_edit/${idx}/${labelVal}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ strokes }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        // Clear local strokes and reload mask from backend
+        window.MaskEditor.clearStrokes();
+        loadImages();
+
+        saveStatus.style.color = "green";
+        saveStatus.textContent = "Saved";
+        setTimeout(() => {
+          saveStatus.textContent = "";
+        }, 1500);
+      })
+      .catch((err) => {
+        console.error(err);
+        saveStatus.style.color = "red";
+        saveStatus.textContent = "Save failed";
+      });
   });
 
   // Initial load (middle slice, no mask)

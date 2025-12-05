@@ -1,4 +1,4 @@
-from flask import Flask, render_template, send_file, abort
+from flask import Flask, render_template, send_file, abort, request, jsonify
 import numpy as np
 from io import BytesIO
 from PIL import Image
@@ -36,6 +36,49 @@ label_list = [
 ]
 
 app = Flask(__name__)
+
+
+def apply_strokes_to_slice(seg_slice: np.ndarray, label_id: int, strokes: list) -> None:
+    """
+    Modify seg_slice in-place based on strokes.
+    - seg_slice: 2D (H, W) view into seg_vol[slice_idx]
+    - label_id: current label we are editing (for pen mode)
+    - strokes: list of {mode, brushSize, points: [{x, y}, ...]}
+    """
+    h, w = seg_slice.shape
+
+    for stroke in strokes:
+        mode = stroke.get("mode", "pen")
+        brush_size = int(stroke.get("brushSize", 5))
+        # Use radius roughly half the brush size (at least 1)
+        radius = max(1, brush_size // 2)
+
+        points = stroke.get("points", [])
+        if not points:
+            continue
+
+        for pt in points:
+            x = pt.get("x")
+            y = pt.get("y")
+            if x is None or y is None:
+                continue
+
+            # Canvas coords: x = column, y = row
+            col = int(round(x))
+            row = int(round(y))
+
+            if row < 0 or row >= h or col < 0 or col >= w:
+                continue
+
+            r0 = max(0, row - radius)
+            r1 = min(h, row + radius + 1)
+            c0 = max(0, col - radius)
+            c1 = min(w, col + radius + 1)
+
+            if mode == "pen":
+                seg_slice[r0:r1, c0:c1] = label_id
+            elif mode == "rubber":
+                seg_slice[r0:r1, c0:c1] = 0
 
 
 # ---------- Image creation helpers (NO matplotlib) ----------
@@ -116,6 +159,30 @@ def slice_mask(slice_idx, label_id):
         abort(404, description="Slice index out of range")
     buf = make_mask_png(slice_idx, label_id)
     return send_file(buf, mimetype="image/png")
+
+@app.route("/api/slice_edit/<int:slice_idx>/<int:label_id>", methods=["POST"])
+def slice_edit(slice_idx, label_id):
+    if slice_idx < 0 or slice_idx >= num_slices:
+        abort(400, description="Slice index out of range")
+
+    data = request.get_json(silent=True) or {}
+    strokes = data.get("strokes", [])
+
+    if not isinstance(strokes, list) or not strokes:
+        return jsonify({"status": "no_strokes"}), 200
+
+    # seg_slice is a view into seg_vol, so modifications are in-place
+    seg_slice = seg_vol[slice_idx]
+    apply_strokes_to_slice(seg_slice, label_id, strokes)
+
+    return jsonify(
+        {
+            "status": "ok",
+            "slice_idx": slice_idx,
+            "label_id": label_id,
+            "num_strokes": len(strokes),
+        }
+    )
 
 
 if __name__ == "__main__":
