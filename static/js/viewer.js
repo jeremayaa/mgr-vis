@@ -18,6 +18,72 @@
   const saveBtn = document.getElementById("saveBtn");
   const saveStatus = document.getElementById("saveStatus");
 
+  let currentSliceIdx = null;
+
+    function sendStrokesToBackend(quiet, afterFn) {
+    if (!window.MaskEditor) {
+      if (afterFn) afterFn();
+      return;
+    }
+
+    const strokes = window.MaskEditor.getStrokes();
+    if (!strokes || !strokes.length) {
+      if (afterFn) afterFn();
+      return;
+    }
+
+    const idx = currentSliceIdx;
+    const labelVal = labelSelect.value;
+
+    if (
+      idx === null ||
+      isNaN(idx) ||
+      idx < 0 ||
+      idx >= numSlices ||
+      !labelVal
+    ) {
+      // Invalid context for strokes; just drop them
+      window.MaskEditor.clearStrokes();
+      if (afterFn) afterFn();
+      return;
+    }
+
+    if (!quiet && saveStatus) {
+      saveStatus.style.color = "black";
+      saveStatus.textContent = "Updating mask in memory...";
+    }
+
+    fetch(`/api/slice_edit/${idx}/${labelVal}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ strokes }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        window.MaskEditor.clearStrokes();
+
+        if (!quiet && saveStatus) {
+          saveStatus.style.color = "green";
+          saveStatus.textContent = "Updated in memory";
+          setTimeout(() => {
+            saveStatus.textContent = "";
+          }, 1000);
+        }
+
+        if (afterFn) afterFn();
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!quiet && saveStatus) {
+          saveStatus.style.color = "red";
+          saveStatus.textContent = "Update failed";
+        }
+        if (afterFn) afterFn();
+      });
+  }
+
   function clearMaskCanvas() {
     maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
   }
@@ -58,10 +124,7 @@
 
     img.src = url;
   }
-
-
-  function loadImages() {
-    const idx = parseInt(sliceInput.value, 10);
+  function loadImagesFor(idx) {
     if (isNaN(idx) || idx < 0 || idx >= numSlices) {
       sliceError.textContent = "Index out of range";
       return;
@@ -70,12 +133,23 @@
 
     const cacheBust = Date.now();
 
+    // Keep input in sync with current slice
+    sliceInput.value = idx;
+
     // Background CT slice
     ctImg.src = "/slice_bg/" + idx + "?_=" + cacheBust;
 
     // Mask overlay
     const labelVal = labelSelect.value;
     loadMaskSlice(idx, labelVal, cacheBust);
+  }
+
+  function loadImages() {
+    if (currentSliceIdx === null) {
+      const initialIdx = parseInt(sliceInput.value, 10) || 0;
+      currentSliceIdx = initialIdx;
+    }
+    loadImagesFor(currentSliceIdx);
   }
 
   function updateBrushColorFromLabel() {
@@ -97,7 +171,20 @@
   }
 
   // Update on slice index change
-  sliceInput.addEventListener("input", loadImages);
+  sliceInput.addEventListener("input", function () {
+    const newIdx = parseInt(sliceInput.value, 10);
+
+    if (isNaN(newIdx) || newIdx < 0 || newIdx >= numSlices) {
+      sliceError.textContent = "Index out of range";
+      return;
+    }
+
+    // First sync strokes for currentSliceIdx, then update and load new slice
+    sendStrokesToBackend(true, function () {
+      currentSliceIdx = newIdx;
+      loadImagesFor(newIdx);
+    });
+  });
 
   // Update on label selection change
   labelSelect.addEventListener("change", function () {
@@ -132,57 +219,43 @@
 
   // Wire Save button
   saveBtn.addEventListener("click", function () {
-    const idx = parseInt(sliceInput.value, 10);
-    if (isNaN(idx) || idx < 0 || idx >= numSlices) {
+    const idx = currentSliceIdx;
+    if (
+      idx === null ||
+      isNaN(idx) ||
+      idx < 0 ||
+      idx >= numSlices
+    ) {
       sliceError.textContent = "Index out of range";
       return;
     }
 
-    const labelVal = labelSelect.value;
-    if (!labelVal) {
-      saveStatus.style.color = "red";
-      saveStatus.textContent = "Select a label first";
-      return;
-    }
+    // First: push any pending strokes for current slice/label into seg_vol
+    const syncThenSave = function () {
+      saveStatus.style.color = "black";
+      saveStatus.textContent = "Saving to disk...";
 
-    if (!window.MaskEditor) {
-      return;
-    }
-
-    const strokes = window.MaskEditor.getStrokes();
-    if (!strokes || !strokes.length) {
-      saveStatus.style.color = "orange";
-      saveStatus.textContent = "Nothing to save";
-      return;
-    }
-
-    saveStatus.style.color = "black";
-    saveStatus.textContent = "Saving...";
-
-    fetch(`/api/slice_edit/${idx}/${labelVal}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ strokes }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        // Clear local strokes and reload mask from backend
-        window.MaskEditor.clearStrokes();
-        loadImages();
-
-        saveStatus.style.color = "green";
-        saveStatus.textContent = "Saved";
-        setTimeout(() => {
-          saveStatus.textContent = "";
-        }, 1500);
+      fetch("/api/save_all", {
+        method: "POST",
       })
-      .catch((err) => {
-        console.error(err);
-        saveStatus.style.color = "red";
-        saveStatus.textContent = "Save failed";
-      });
+        .then((res) => res.json())
+        .then((data) => {
+          saveStatus.style.color = "green";
+          saveStatus.textContent = "Saved to disk";
+          setTimeout(() => {
+            saveStatus.textContent = "";
+          }, 1500);
+        })
+        .catch((err) => {
+          console.error(err);
+          saveStatus.style.color = "red";
+          saveStatus.textContent = "Disk save failed";
+        });
+    };
+
+    // sync strokes (non-quiet so user knows something is happening),
+    // then export to .npy
+    sendStrokesToBackend(false, syncThenSave);
   });
 
   // Initial load (middle slice, no mask)

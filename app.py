@@ -218,9 +218,6 @@ def slice_edit(slice_idx, label_id):
     seg_slice = seg_vol[slice_idx]
     apply_strokes_to_slice(seg_slice, label_id, strokes)
 
-    # Persist to edited .npy file
-    save_segmentation()
-
     return jsonify(
         {
             "status": "ok",
@@ -231,6 +228,10 @@ def slice_edit(slice_idx, label_id):
         }
     )
 
+@app.route("/api/save_all", methods=["POST"])
+def save_all():
+    save_segmentation()
+    return jsonify({"status": "ok", "path": SEG_EDITED_PATH})
 
 
 if __name__ == "__main__":
