@@ -19,11 +19,12 @@
       #ctImg {
         display: block; /* defines container size */
       }
-      #maskImg {
+      #maskCanvas {
         position: absolute;
         top: 0;
         left: 0;
-        pointer-events: none; /* so you can still drag/select over it if needed */
+        /* keep pointer-events enabled for future drawing;
+          can be pointer-events: none */
       }
       input[type="number"] {
         width: 100px;
@@ -63,10 +64,10 @@
     <div id="viewer">
       <!-- background CT slice -->
       <img id="ctImg" src="" alt="CT slice" />
-      <!-- overlay mask slice -->
-      <img id="maskImg" src="" alt="Mask overlay" />
+      <!-- overlay mask slice, now as canvas -->
+      <canvas id="maskCanvas"></canvas>
     </div>
-      
+        
     <!-- inject numSlices into a global so external JS can use it -->
     <script>
       window.numSlices = {{ num_slices }};

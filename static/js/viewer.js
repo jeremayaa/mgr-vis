@@ -8,7 +8,12 @@
   const sliceError = document.getElementById("sliceError");
   const labelSelect = document.getElementById("labelSelect");
   const ctImg = document.getElementById("ctImg");
-  const maskImg = document.getElementById("maskImg");
+  const maskCanvas = document.getElementById("maskCanvas");
+  const maskCtx = maskCanvas.getContext("2d");
+
+  function clearMaskCanvas() {
+    maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+  }
 
   function loadImages() {
     const idx = parseInt(sliceInput.value, 10);
@@ -26,10 +31,24 @@
     // Mask overlay (only if label selected)
     const labelVal = labelSelect.value;
     if (labelVal) {
-      maskImg.style.display = "block";
-      maskImg.src = "/slice_mask/" + idx + "/" + labelVal + "?_=" + cacheBust;
+      maskCanvas.style.display = "block";
+
+      const url = "/slice_mask/" + idx + "/" + labelVal + "?_=" + cacheBust;
+      const img = new Image();
+
+      img.onload = function () {
+        // Match canvas size to mask image size
+        maskCanvas.width = img.width;
+        maskCanvas.height = img.height;
+
+        clearMaskCanvas();
+        maskCtx.drawImage(img, 0, 0);
+      };
+
+      img.src = url;
     } else {
-      maskImg.style.display = "none";
+      maskCanvas.style.display = "none";
+      clearMaskCanvas();
     }
   }
 
