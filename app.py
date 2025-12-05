@@ -37,7 +37,6 @@ label_list = [
 
 app = Flask(__name__)
 
-
 def apply_strokes_to_slice(seg_slice: np.ndarray, label_id: int, strokes: list) -> None:
     """
     Modify seg_slice in-place based on strokes.
@@ -47,38 +46,67 @@ def apply_strokes_to_slice(seg_slice: np.ndarray, label_id: int, strokes: list) 
     """
     h, w = seg_slice.shape
 
+    def apply_brush(row: int, col: int, radius: int, mode: str):
+        if row < 0 or row >= h or col < 0 or col >= w:
+            return
+        r0 = max(0, row - radius)
+        r1 = min(h, row + radius + 1)
+        c0 = max(0, col - radius)
+        c1 = min(w, col + radius + 1)
+
+        if mode == "pen":
+            seg_slice[r0:r1, c0:c1] = label_id
+        elif mode == "rubber":
+            seg_slice[r0:r1, c0:c1] = 0
+
     for stroke in strokes:
         mode = stroke.get("mode", "pen")
         brush_size = int(stroke.get("brushSize", 5))
-        # Use radius roughly half the brush size (at least 1)
         radius = max(1, brush_size // 2)
 
         points = stroke.get("points", [])
         if not points:
             continue
 
+        # Walk through consecutive point pairs and interpolate
+        prev_pt = None
         for pt in points:
             x = pt.get("x")
             y = pt.get("y")
             if x is None or y is None:
                 continue
 
-            # Canvas coords: x = column, y = row
-            col = int(round(x))
-            row = int(round(y))
-
-            if row < 0 or row >= h or col < 0 or col >= w:
+            if prev_pt is None:
+                # First point of stroke
+                row = int(round(y))
+                col = int(round(x))
+                apply_brush(row, col, radius, mode)
+                prev_pt = (x, y)
                 continue
 
-            r0 = max(0, row - radius)
-            r1 = min(h, row + radius + 1)
-            c0 = max(0, col - radius)
-            c1 = min(w, col + radius + 1)
+            x0, y0 = prev_pt
+            x1, y1 = x, y
 
-            if mode == "pen":
-                seg_slice[r0:r1, c0:c1] = label_id
-            elif mode == "rubber":
-                seg_slice[r0:r1, c0:c1] = 0
+            dx = x1 - x0
+            dy = y1 - y0
+            # number of steps = max delta in pixels, at least 1
+            steps = int(max(abs(dx), abs(dy)))
+            if steps == 0:
+                row = int(round(y1))
+                col = int(round(x1))
+                apply_brush(row, col, radius, mode)
+                prev_pt = (x1, y1)
+                continue
+
+            for i in range(1, steps + 1):
+                t = i / steps
+                xi = x0 + t * dx
+                yi = y0 + t * dy
+                row = int(round(yi))
+                col = int(round(xi))
+                apply_brush(row, col, radius, mode)
+
+            prev_pt = (x1, y1)
 
 
 # ---------- Image creation helpers (NO matplotlib) ----------
