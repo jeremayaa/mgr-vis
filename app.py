@@ -10,11 +10,20 @@ import qrcode
 # ---------- Paths ----------
 IMG_PATH = os.path.join("images", "ct_volume.npy")
 SEG_PATH = os.path.join("images", "rtstruct_labels.npy")
+SEG_EDITED_PATH = os.path.join("images", "edited_rtstruct_labels.npy")
 LABELS_PATH = os.path.join("images", "labels.json")
 
 # ---------- Load data once ----------
 img_vol = np.load(IMG_PATH).astype(np.float32)   # (953, 512, 512) CT
-seg_vol = np.load(SEG_PATH).astype(np.int16)     # (953, 512, 512) mask
+
+# Prefer edited mask if it exists, otherwise original
+if os.path.exists(SEG_EDITED_PATH):
+    print(f"Loading edited segmentation from {SEG_EDITED_PATH}")
+    seg_vol = np.load(SEG_EDITED_PATH).astype(np.int16)
+else:
+    print(f"Loading original segmentation from {SEG_PATH}")
+    seg_vol = np.load(SEG_PATH).astype(np.int16)
+
 num_slices = img_vol.shape[0]
 
 with open(LABELS_PATH, "r") as f:
@@ -108,6 +117,12 @@ def apply_strokes_to_slice(seg_slice: np.ndarray, label_id: int, strokes: list) 
 
             prev_pt = (x1, y1)
 
+def save_segmentation() -> None:
+    """
+    Save the current seg_vol to the edited segmentation file.
+    """
+    np.save(SEG_EDITED_PATH, seg_vol)
+    print(f"Saved edited segmentation to {SEG_EDITED_PATH}")
 
 # ---------- Image creation helpers (NO matplotlib) ----------
 
@@ -203,14 +218,19 @@ def slice_edit(slice_idx, label_id):
     seg_slice = seg_vol[slice_idx]
     apply_strokes_to_slice(seg_slice, label_id, strokes)
 
+    # Persist to edited .npy file
+    save_segmentation()
+
     return jsonify(
         {
             "status": "ok",
             "slice_idx": slice_idx,
             "label_id": label_id,
             "num_strokes": len(strokes),
+            "saved_to": SEG_EDITED_PATH,
         }
     )
+
 
 
 if __name__ == "__main__":
