@@ -128,6 +128,11 @@
       .then((data) => {
         window.MaskEditor.clearStrokes();
 
+        // IMPORTANT: segmentation changed on backend for same (z,label),
+        // so cached mask PNG is now stale. Force a refetch on next render.
+        maskImage = null;
+        maskKey = null;
+
         if (!quiet && saveStatus) {
           saveStatus.style.color = "green";
           saveStatus.textContent = "Updated in memory";
@@ -137,6 +142,7 @@
         }
 
         if (afterFn) afterFn();
+        loadMaskSlice(viewState.z);
       })
       .catch((err) => {
         console.error(err);
