@@ -16,8 +16,8 @@
         display: inline-block;
         border: 1px solid #ccc;
       }
-      #ctImg {
-        display: block; /* defines container size */
+      #ctCanvas {
+        display: block; 
       }
       #maskCanvas {
         position: absolute;
@@ -78,7 +78,7 @@
 
     <div id="viewer">
       <!-- background CT slice -->
-      <img id="ctImg" src="" alt="CT slice" />
+      <canvas id="ctCanvas"></canvas>
       <!-- overlay mask slice, now as canvas -->
       <canvas id="maskCanvas"></canvas>
     </div>

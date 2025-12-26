@@ -7,7 +7,8 @@
   const sliceInput = document.getElementById("sliceInput");
   const sliceError = document.getElementById("sliceError");
   const labelSelect = document.getElementById("labelSelect");
-  const ctImg = document.getElementById("ctImg");
+  const ctCanvas = document.getElementById("ctCanvas");
+  const ctCtx = ctCanvas.getContext("2d");
   const maskCanvas = document.getElementById("maskCanvas");
   const maskCtx = maskCanvas.getContext("2d");
 
@@ -142,6 +143,27 @@
 
     img.src = url;
   }
+
+  function clearCtCanvas() {
+    ctCtx.clearRect(0, 0, ctCanvas.width, ctCanvas.height);
+  }
+
+  function loadCtSlice(idx, cacheBust) {
+    const url = "/slice_bg/" + idx + "?_=" + cacheBust;
+    const img = new Image();
+
+    img.onload = function () {
+      // Make CT canvas match image pixels exactly
+      ctCanvas.width = img.width;
+      ctCanvas.height = img.height;
+
+      clearCtCanvas();
+      ctCtx.drawImage(img, 0, 0);
+    };
+
+    img.src = url;
+  }
+
   function render() {
     const idx = viewState.z;
 
@@ -157,9 +179,9 @@
 
     // Keep input in sync with state
     sliceInput.value = idx;
-
+    
     // Background CT slice
-    ctImg.src = "/slice_bg/" + idx + "?_=" + cacheBust;
+    loadCtSlice(idx, cacheBust);
 
     // Mask overlay
     loadMaskSlice(idx, cacheBust);
