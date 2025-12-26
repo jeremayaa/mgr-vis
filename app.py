@@ -12,17 +12,18 @@ IMG_PATH = os.path.join("images", "ct_volume.npy")
 SEG_PATH = os.path.join("images", "rtstruct_labels.npy")
 SEG_EDITED_PATH = os.path.join("images", "edited_rtstruct_labels.npy")
 LABELS_PATH = os.path.join("images", "labels.json")
+EDITS_LOG_PATH = os.path.join("images", "edits_log.npz")
 
 # ---------- Load data once ----------
 img_vol = np.load(IMG_PATH).astype(np.float32)   # (953, 512, 512) CT
 
 # Prefer edited mask if it exists, otherwise original
-if os.path.exists(SEG_EDITED_PATH):
-    print(f"Loading edited segmentation from {SEG_EDITED_PATH}")
-    seg_vol = np.load(SEG_EDITED_PATH).astype(np.int16)
-else:
-    print(f"Loading original segmentation from {SEG_PATH}")
-    seg_vol = np.load(SEG_PATH).astype(np.int16)
+# Load original segmentation as base
+print(f"Loading original segmentation from {SEG_PATH}")
+seg_vol = np.load(SEG_PATH).astype(np.int16)
+
+# If there is an edits log, apply it on top
+# load_edit_log_if_exists()
 
 num_slices = img_vol.shape[0]
 
@@ -176,6 +177,107 @@ def make_mask_png(slice_idx: int, label_id: int) -> BytesIO:
     return buf
 
 
+# ---- Edit history (operation log) ----
+undo_stack = []  # list of ops (applied)
+redo_stack = []  # list of ops (undone)
+
+def _apply_op(op, direction: str) -> None:
+    """
+    Apply an operation to seg_vol in-place.
+    direction: "undo" uses old_vals, "redo" uses new_vals
+    """
+    z = int(op["slice_idx"])
+    idx = op["flat_idx"]
+    vals = op["old_vals"] if direction == "undo" else op["new_vals"]
+
+    sl = seg_vol[z].ravel()
+    sl[idx] = vals
+
+def _push_op(z: int, flat_idx: np.ndarray, old_vals: np.ndarray, new_vals: np.ndarray) -> None:
+    """
+    Record an op and clear redo stack (new edit invalidates redo history).
+    """
+    if flat_idx.size == 0:
+        return
+    undo_stack.append(
+        {
+            "slice_idx": int(z),
+            "flat_idx": flat_idx.astype(np.int32, copy=True),
+            "old_vals": old_vals.astype(np.int16, copy=True),
+            "new_vals": new_vals.astype(np.int16, copy=True),
+        }
+    )
+    redo_stack.clear()
+
+def save_edit_log() -> None:
+    """
+    Save applied ops (undo_stack) to a compact .npz file.
+    """
+    ops = undo_stack
+    n = len(ops)
+
+    slice_idx = np.empty(n, dtype=np.int16)
+    starts = np.zeros(n + 1, dtype=np.int64)
+
+    total = 0
+    for i, op in enumerate(ops):
+        m = int(op["flat_idx"].size)
+        slice_idx[i] = int(op["slice_idx"])
+        starts[i] = total
+        total += m
+    starts[n] = total
+
+    idxs = np.empty(total, dtype=np.int32)
+    old = np.empty(total, dtype=np.int16)
+    new = np.empty(total, dtype=np.int16)
+
+    cursor = 0
+    for op in ops:
+        fi = op["flat_idx"]
+        m = int(fi.size)
+        idxs[cursor:cursor+m] = fi
+        old[cursor:cursor+m] = op["old_vals"]
+        new[cursor:cursor+m] = op["new_vals"]
+        cursor += m
+
+    np.savez_compressed(EDITS_LOG_PATH, slice_idx=slice_idx, starts=starts, idxs=idxs, old=old, new=new)
+    print(f"Saved edit log to {EDITS_LOG_PATH} ({n} ops, {total} pixels changed)")
+
+def load_edit_log_if_exists() -> None:
+    """
+    Load edit log and replay it into seg_vol.
+    Also reconstruct undo_stack so undo/redo works after restart.
+    """
+    if not os.path.exists(EDITS_LOG_PATH):
+        return
+
+    data = np.load(EDITS_LOG_PATH)
+    slice_idx = data["slice_idx"]
+    starts = data["starts"]
+    idxs = data["idxs"]
+    old = data["old"]
+    new = data["new"]
+
+    undo_stack.clear()
+    redo_stack.clear()
+
+    for i in range(slice_idx.shape[0]):
+        a = int(starts[i])
+        b = int(starts[i + 1])
+        op = {
+            "slice_idx": int(slice_idx[i]),
+            "flat_idx": idxs[a:b].astype(np.int32, copy=True),
+            "old_vals": old[a:b].astype(np.int16, copy=True),
+            "new_vals": new[a:b].astype(np.int16, copy=True),
+        }
+        # Replay "redo" to build current seg_vol
+        _apply_op(op, "redo")
+        undo_stack.append(op)
+
+    print(f"Loaded edit log from {EDITS_LOG_PATH} ({len(undo_stack)} ops)")
+
+
+
 # ---------- Flask routes ----------
 
 @app.route("/")
@@ -216,7 +318,17 @@ def slice_edit(slice_idx, label_id):
 
     # seg_slice is a view into seg_vol, so modifications are in-place
     seg_slice = seg_vol[slice_idx]
+
+    before = seg_slice.copy()
     apply_strokes_to_slice(seg_slice, label_id, strokes)
+
+    after = seg_slice  # same view
+    changed = (before != after)
+    flat_idx = np.flatnonzero(changed.ravel())
+    if flat_idx.size > 0:
+        old_vals = before.ravel()[flat_idx]
+        new_vals = after.ravel()[flat_idx]
+        _push_op(slice_idx, flat_idx, old_vals, new_vals)
 
     return jsonify(
         {
@@ -230,9 +342,29 @@ def slice_edit(slice_idx, label_id):
 
 @app.route("/api/save_all", methods=["POST"])
 def save_all():
-    save_segmentation()
-    return jsonify({"status": "ok", "path": SEG_EDITED_PATH})
+    save_edit_log()
+    return jsonify({"status": "ok", "path": EDITS_LOG_PATH, "num_ops": len(undo_stack)})
 
+@app.route("/api/undo", methods=["POST"])
+def api_undo():
+    if not undo_stack:
+        return jsonify({"status": "empty"}), 200
+
+    op = undo_stack.pop()
+    _apply_op(op, "undo")
+    redo_stack.append(op)
+    return jsonify({"status": "ok", "slice_idx": int(op["slice_idx"])}), 200
+
+
+@app.route("/api/redo", methods=["POST"])
+def api_redo():
+    if not redo_stack:
+        return jsonify({"status": "empty"}), 200
+
+    op = redo_stack.pop()
+    _apply_op(op, "redo")
+    undo_stack.append(op)
+    return jsonify({"status": "ok", "slice_idx": int(op["slice_idx"])}), 200
 
 if __name__ == "__main__":
     # Helper: get local IP visible to your LAN (not 127.0.0.1)

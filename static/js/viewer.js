@@ -23,6 +23,9 @@
   const panXInput = document.getElementById("panXInput");
   const panYInput = document.getElementById("panYInput");
 
+  const undoBtn = document.getElementById("undoBtn");
+  const redoBtn = document.getElementById("redoBtn");
+
   let ctImage = null;
   let ctKey = null; // slice index
 
@@ -181,7 +184,6 @@
     maskCtx.putImageData(imageData, 0, 0);
   }
 
-
   function loadMaskSlice(idx) {
     const labelVal = viewState.labelId;
 
@@ -219,8 +221,6 @@
 
     img.src = url;
   }
-
-
 
   function clearCtCanvas() {
     ctCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -290,6 +290,57 @@
     // Mask: fetch only if (z,label) changed, otherwise redraw
     loadMaskSlice(idx);
   }
+
+  // undo/redo handlers
+  function afterSegmentationChanged() {
+    // mask PNG is now stale
+    maskImage = null;
+    maskKey = null;
+    render();
+  }
+
+  undoBtn.addEventListener("click", function () {
+    // Commit any pending strokes first
+    sendStrokesToBackend(true, function () {
+      fetch("/api/undo", { method: "POST" })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.status === "empty") {
+            saveStatus.style.color = "black";
+            saveStatus.textContent = "Nothing to undo";
+            setTimeout(() => (saveStatus.textContent = ""), 800);
+            return;
+          }
+          afterSegmentationChanged();
+        })
+        .catch((err) => {
+          console.error(err);
+          saveStatus.style.color = "red";
+          saveStatus.textContent = "Undo failed";
+        });
+    });
+  });
+
+  redoBtn.addEventListener("click", function () {
+    sendStrokesToBackend(true, function () {
+      fetch("/api/redo", { method: "POST" })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.status === "empty") {
+            saveStatus.style.color = "black";
+            saveStatus.textContent = "Nothing to redo";
+            setTimeout(() => (saveStatus.textContent = ""), 800);
+            return;
+          }
+          afterSegmentationChanged();
+        })
+        .catch((err) => {
+          console.error(err);
+          saveStatus.style.color = "red";
+          saveStatus.textContent = "Redo failed";
+        });
+    });
+  });
 
 
 
