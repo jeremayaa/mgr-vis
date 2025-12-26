@@ -18,7 +18,24 @@
   const saveBtn = document.getElementById("saveBtn");
   const saveStatus = document.getElementById("saveStatus");
 
-  let currentSliceIdx = null;
+  // ---- View state (single source of truth) ----
+  const viewState = {
+    z: null,          // slice index
+    labelId: "",      // selected label (string, "" means none)
+  };
+
+  function clampZ(z) {
+    if (isNaN(z)) return 0;
+    return Math.max(0, Math.min(numSlices - 1, z));
+  }
+
+  function setState(patch) {
+    Object.assign(viewState, patch);
+    render();
+  }
+
+  // let currentSliceIdx = null;
+  // NOTE: z is stored in viewState.z now
 
     function sendStrokesToBackend(quiet, afterFn) {
     if (!window.MaskEditor) {
@@ -32,8 +49,8 @@
       return;
     }
 
-    const idx = currentSliceIdx;
-    const labelVal = labelSelect.value;
+    const idx = viewState.z;
+    const labelVal = viewState.labelId;
 
     if (
       idx === null ||
@@ -88,7 +105,8 @@
     maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
   }
 
-  function loadMaskSlice(idx, labelVal, cacheBust) {
+  function loadMaskSlice(idx, cacheBust) {
+    const labelVal = viewState.labelId;
     if (!labelVal) {
       maskCanvas.style.display = "none";
       clearMaskCanvas();
@@ -124,7 +142,11 @@
 
     img.src = url;
   }
-  function loadImagesFor(idx) {
+  function render() {
+    const idx = viewState.z;
+
+    if (idx === null) return;
+
     if (isNaN(idx) || idx < 0 || idx >= numSlices) {
       sliceError.textContent = "Index out of range";
       return;
@@ -133,27 +155,25 @@
 
     const cacheBust = Date.now();
 
-    // Keep input in sync with current slice
+    // Keep input in sync with state
     sliceInput.value = idx;
 
     // Background CT slice
     ctImg.src = "/slice_bg/" + idx + "?_=" + cacheBust;
 
     // Mask overlay
-    const labelVal = labelSelect.value;
-    loadMaskSlice(idx, labelVal, cacheBust);
+    loadMaskSlice(idx, cacheBust);
   }
 
-  function loadImages() {
-    if (currentSliceIdx === null) {
-      const initialIdx = parseInt(sliceInput.value, 10) || 0;
-      currentSliceIdx = initialIdx;
-    }
-    loadImagesFor(currentSliceIdx);
+
+  function initStateFromUI() {
+    const initialZ = clampZ(parseInt(sliceInput.value, 10) || 0);
+    viewState.z = initialZ;
+    viewState.labelId = labelSelect.value || "";
   }
 
   function updateBrushColorFromLabel() {
-    const labelVal = labelSelect.value;
+    const labelVal = viewState.labelId;
     if (!labelVal) {
       return;
     }
@@ -172,17 +192,16 @@
 
   // Update on slice index change
   sliceInput.addEventListener("input", function () {
-    const newIdx = parseInt(sliceInput.value, 10);
+    const newZ = clampZ(parseInt(sliceInput.value, 10));
 
-    if (isNaN(newIdx) || newIdx < 0 || newIdx >= numSlices) {
+    if (isNaN(newZ) || newZ < 0 || newZ >= numSlices) {
       sliceError.textContent = "Index out of range";
       return;
     }
 
-    // First sync strokes for currentSliceIdx, then update and load new slice
+    // First sync strokes for current slice, then change z
     sendStrokesToBackend(true, function () {
-      currentSliceIdx = newIdx;
-      loadImagesFor(newIdx);
+      setState({ z: newZ });
     });
   });
 
@@ -192,9 +211,14 @@
     if (window.MaskEditor) {
       window.MaskEditor.clearStrokes();
     }
+
+    const newLabelId = labelSelect.value || "";
+    setState({ labelId: newLabelId });
+
+    // Color depends on label
     updateBrushColorFromLabel();
-    loadImages();
   });
+
 
   // Init MaskEditor
   if (window.MaskEditor) {
@@ -219,7 +243,7 @@
 
   // Wire Save button
   saveBtn.addEventListener("click", function () {
-    const idx = currentSliceIdx;
+    const idx = viewState.z;
     if (
       idx === null ||
       isNaN(idx) ||
@@ -260,8 +284,8 @@
 
   // Initial load (middle slice, no mask)
   window.addEventListener("load", function () {
-    loadImages();
-    // If a label is already selected (rare, but just in case), sync color
+    initStateFromUI();
+    render();
     updateBrushColorFromLabel();
   });
 })();
