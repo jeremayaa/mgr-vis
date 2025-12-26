@@ -337,16 +337,15 @@
 
   // Update on label selection change
   labelSelect.addEventListener("change", function () {
-    // When changing label, drop unsaved strokes from previous label
-    if (window.MaskEditor) {
-      window.MaskEditor.clearStrokes();
-    }
-
     const newLabelId = labelSelect.value || "";
-    setState({ labelId: newLabelId });
 
-    // Color depends on label
-    updateBrushColorFromLabel();
+    // Commit strokes for the *previous* label before switching.
+    // IMPORTANT: sendStrokesToBackend uses viewState.labelId (old one),
+    // so do NOT setState(labelId) until after sync is done.
+    sendStrokesToBackend(true, function () {
+      setState({ labelId: newLabelId });
+      updateBrushColorFromLabel();
+    });
   });
 
 
