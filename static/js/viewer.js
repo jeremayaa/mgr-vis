@@ -26,11 +26,15 @@
   const undoBtn = document.getElementById("undoBtn");
   const redoBtn = document.getElementById("redoBtn");
 
+  const lassoPenBtn = document.getElementById("lassoPenBtn");
+  const lassoRubberBtn = document.getElementById("lassoRubberBtn");
+
   let ctImage = null;
   let ctKey = null; // slice index
 
   let maskImage = null;
   let maskKey = null; // `${z}:${labelId}`
+
 
 
   // ---- View state (single source of truth) ----
@@ -342,6 +346,14 @@
     });
   });
 
+  lassoPenBtn.addEventListener("click", function () {
+    if (window.MaskEditor) window.MaskEditor.setMode("lasso_pen");
+  });
+
+  lassoRubberBtn.addEventListener("click", function () {
+    if (window.MaskEditor) window.MaskEditor.setMode("lasso_rubber");
+  });
+
 
 
   function initStateFromUI() {
@@ -407,7 +419,17 @@
       modeIndicator: modeIndicator,
       toImageCoords: canvasToImage,
       getScale: getScale,
-    });
+      onLassoCommit: function () {
+        // Commit immediately so the outline doesn’t “disappear”
+        // and so the backend mask becomes the truth.
+        sendStrokesToBackend(true, function () {
+          // ensure refreshed mask after edit
+          maskImage = null;
+          maskKey = null;
+          render();
+        });
+      },
+  });
   }
 
   // Wire Pen / Rubber buttons

@@ -19,14 +19,18 @@ window.MaskEditor = (function () {
   let currentStroke = null;
 
   let modeIndicatorElem = null;
+  let onLassoCommit = null;
 
   function setMode(newMode) {
-    if (newMode !== "pen" && newMode !== "rubber") return;
+    if (!["pen", "rubber", "lasso_pen", "lasso_rubber"].includes(newMode)) return;
     mode = newMode;
 
     if (modeIndicatorElem) {
-      modeIndicatorElem.textContent =
-        mode === "pen" ? "Mode: Pen" : "Mode: Rubber";
+      if (mode === "pen") modeIndicatorElem.textContent = "Mode: Pen";
+      else if (mode === "rubber") modeIndicatorElem.textContent = "Mode: Rubber";
+      else if (mode === "lasso_pen") modeIndicatorElem.textContent = "Mode: Lasso Pen";
+      else if (mode === "lasso_rubber") modeIndicatorElem.textContent = "Mode: Lasso Rubber";
+      else modeIndicatorElem.textContent = `Mode: ${mode}`;
     }
   }
   
@@ -40,19 +44,25 @@ window.MaskEditor = (function () {
   }
 
   function updateDrawingStyle() {
-    if (!ctx) return;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    ctx.lineWidth = brushSize * getViewScale();
+
+    // Default: normal preview drawing
+    ctx.globalCompositeOperation = "source-over";
 
     if (mode === "pen") {
-      // Normal drawing, no special compositing
-      ctx.globalCompositeOperation = "source-over";
+      ctx.lineWidth = brushSize * getViewScale();
       ctx.strokeStyle = strokeColor;
     } else if (mode === "rubber") {
-      // Erase from the canvas
+      ctx.lineWidth = brushSize * getViewScale();
       ctx.globalCompositeOperation = "destination-out";
       ctx.strokeStyle = "rgba(0,0,0,1)";
+    } else if (mode === "lasso_pen") {
+      ctx.lineWidth = 2 * getViewScale();
+      ctx.strokeStyle = strokeColor;
+    } else if (mode === "lasso_rubber") {
+      ctx.lineWidth = 2 * getViewScale();
+      ctx.strokeStyle = "rgb(0,0,0)";
     }
   }
 
@@ -113,9 +123,20 @@ window.MaskEditor = (function () {
     if (!isDrawing) return;
     isDrawing = false;
 
-    if (currentStroke) {
-      strokes.push(currentStroke);
-      currentStroke = null;
+    if (!currentStroke) return;
+
+    // capture before we null it
+    const finishedMode = currentStroke.mode;
+
+    strokes.push(currentStroke);
+    currentStroke = null;
+
+    // Auto-commit only for lasso tools
+    if (
+      (finishedMode === "lasso_pen" || finishedMode === "lasso_rubber") &&
+      typeof onLassoCommit === "function"
+    ) {
+      onLassoCommit();
     }
   }
 
@@ -132,13 +153,14 @@ window.MaskEditor = (function () {
     canvas.addEventListener("touchcancel", finishStroke);
   }
 
-  function init({ canvas: canvasElem, modeIndicator, toImageCoords: toFn, getScale: getScaleFn }) {
+  function init({ canvas: canvasElem, modeIndicator, toImageCoords: toFn, getScale: getScaleFn, onLassoCommit: onLassoCommitFn }) {
     canvas = canvasElem;
     ctx = canvas.getContext("2d");
     modeIndicatorElem = modeIndicator || null;
 
     if (typeof toFn === "function") toImageCoords = toFn;
     if (typeof getScaleFn === "function") getViewScale = getScaleFn;
+    onLassoCommit = typeof onLassoCommitFn === "function" ? onLassoCommitFn : null;
     
     setMode("pen"); // default mode
     attachEvents();
