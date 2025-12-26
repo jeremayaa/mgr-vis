@@ -11,6 +11,9 @@ window.MaskEditor = (function () {
   let lastX = 0;
   let lastY = 0;
 
+  let toImageCoords = (x, y) => ({ x, y });
+  let getViewScale = () => 1;
+
   // For future backend use: keep strokes
   const strokes = [];
   let currentStroke = null;
@@ -40,7 +43,7 @@ window.MaskEditor = (function () {
     if (!ctx) return;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    ctx.lineWidth = brushSize;
+    ctx.lineWidth = brushSize * getViewScale();
 
     if (mode === "pen") {
       // Normal drawing, no special compositing
@@ -57,8 +60,11 @@ window.MaskEditor = (function () {
     const rect = canvas.getBoundingClientRect();
     const clientX = evt.clientX ?? (evt.touches && evt.touches[0].clientX);
     const clientY = evt.clientY ?? (evt.touches && evt.touches[0].clientY);
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+
+    // Convert from CSS pixels -> actual canvas pixel coordinates
+    const x = (clientX - rect.left) * (canvas.width / rect.width);
+    const y = (clientY - rect.top) * (canvas.height / rect.height);
+
     return { x, y };
   }
 
@@ -73,11 +79,13 @@ window.MaskEditor = (function () {
 
     updateDrawingStyle();
 
+    const pImg = toImageCoords(x, y);
+
     currentStroke = {
       mode,
       brushSize,
       color: strokeColor,
-      points: [{ x, y }],
+      points: [{ x: pImg.x, y: pImg.y }],
     };
   }
 
@@ -96,7 +104,8 @@ window.MaskEditor = (function () {
     lastY = y;
 
     if (currentStroke) {
-      currentStroke.points.push({ x, y });
+      const pImg = toImageCoords(x, y);
+      currentStroke.points.push({ x: pImg.x, y: pImg.y });
     }
   }
 
@@ -123,11 +132,14 @@ window.MaskEditor = (function () {
     canvas.addEventListener("touchcancel", finishStroke);
   }
 
-  function init({ canvas: canvasElem, modeIndicator }) {
+  function init({ canvas: canvasElem, modeIndicator, toImageCoords: toFn, getScale: getScaleFn }) {
     canvas = canvasElem;
     ctx = canvas.getContext("2d");
     modeIndicatorElem = modeIndicator || null;
 
+    if (typeof toFn === "function") toImageCoords = toFn;
+    if (typeof getScaleFn === "function") getViewScale = getScaleFn;
+    
     setMode("pen"); // default mode
     attachEvents();
   }

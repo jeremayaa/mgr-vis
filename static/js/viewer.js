@@ -19,10 +19,24 @@
   const saveBtn = document.getElementById("saveBtn");
   const saveStatus = document.getElementById("saveStatus");
 
+  const zoomInput = document.getElementById("zoomInput");
+  const panXInput = document.getElementById("panXInput");
+  const panYInput = document.getElementById("panYInput");
+
+  let ctImage = null;
+  let ctKey = null; // slice index
+
+  let maskImage = null;
+  let maskKey = null; // `${z}:${labelId}`
+
+
   // ---- View state (single source of truth) ----
   const viewState = {
     z: null,          // slice index
     labelId: "",      // selected label (string, "" means none)
+    zoom: 0,   // 0 => 1x, 1 => 2x, -1 => 0.5x
+    panX: 0,   // pixels in canvas space
+    panY: 0,
   };
 
   function clampZ(z) {
@@ -34,6 +48,38 @@
     Object.assign(viewState, patch);
     render();
   }
+  
+  function getScale() {
+    // zoom is log2 scale: 0=>1x, 1=>2x, -1=>0.5x
+    return Math.pow(2, viewState.zoom);
+  }
+
+  function applyViewTransform(ctx, imgW, imgH) {
+    const s = getScale();
+    const cw = ctCanvas.width;
+    const ch = ctCanvas.height;
+
+    const tx = cw / 2 + viewState.panX - (s * imgW) / 2;
+    const ty = ch / 2 + viewState.panY - (s * imgH) / 2;
+
+    ctx.setTransform(s, 0, 0, s, tx, ty);
+  }
+
+  function canvasToImage(xCanvasPx, yCanvasPx) {
+    const s = getScale();
+    const cw = ctCanvas.width;
+    const ch = ctCanvas.height;
+
+    // assume image is drawn with its natural pixel size equal to canvas base size
+    const imgW = ctCanvas.width;
+    const imgH = ctCanvas.height;
+
+    const xImg = imgW / 2 + (xCanvasPx - cw / 2 - viewState.panX) / s;
+    const yImg = imgH / 2 + (yCanvasPx - ch / 2 - viewState.panY) / s;
+
+    return { x: xImg, y: yImg };
+  }
+
 
   // let currentSliceIdx = null;
   // NOTE: z is stored in viewState.z now
@@ -106,59 +152,107 @@
     maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
   }
 
-  function loadMaskSlice(idx, cacheBust) {
+  function drawMask() {
+    if (!maskImage || !viewState.labelId) {
+      clearMaskCanvas();
+      return;
+    }
+
+    const imgW = maskImage.width;
+    const imgH = maskImage.height;
+
+    clearMaskCanvas();
+    applyViewTransform(maskCtx, imgW, imgH);
+    maskCtx.drawImage(maskImage, 0, 0);
+
+    // Make mask pixels fully opaque (keep CSS opacity controlling transparency)
+    maskCtx.setTransform(1, 0, 0, 1, 0, 0);
+    const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+    const data = imageData.data;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] !== 0) data[i] = 255;
+    }
+    maskCtx.putImageData(imageData, 0, 0);
+  }
+
+
+  function loadMaskSlice(idx) {
     const labelVal = viewState.labelId;
+
     if (!labelVal) {
       maskCanvas.style.display = "none";
+      maskImage = null;
+      maskKey = null;
       clearMaskCanvas();
       return;
     }
 
     maskCanvas.style.display = "block";
 
-    const url = "/slice_mask/" + idx + "/" + labelVal + "?_=" + cacheBust;
+    const key = `${idx}:${labelVal}`;
+    if (maskKey === key && maskImage) {
+      drawMask();
+      return;
+    }
+
+    const url = "/slice_mask/" + idx + "/" + labelVal + "?_=" + Date.now();
     const img = new Image();
 
     img.onload = function () {
-      // Match canvas size to mask image size
-      maskCanvas.width = img.width;
-      maskCanvas.height = img.height;
+      maskImage = img;
+      maskKey = key;
 
-      clearMaskCanvas();
-      maskCtx.drawImage(img, 0, 0);
-
-      // Remove per-pixel alpha: make all non-transparent mask pixels fully opaque
-      const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-      const data = imageData.data; // [R,G,B,A,...]
-
-      for (let i = 3; i < data.length; i += 4) {
-        // if pixel is part of the mask (alpha > 0), set alpha to 255
-        if (data[i] !== 0) {
-          data[i] = 255;
-        }
+      // canvases already sized by CT load, but safe to keep aligned
+      if (maskCanvas.width !== img.width || maskCanvas.height !== img.height) {
+        maskCanvas.width = img.width;
+        maskCanvas.height = img.height;
       }
 
-      maskCtx.putImageData(imageData, 0, 0);
+      drawMask();
     };
 
     img.src = url;
   }
 
+
+
   function clearCtCanvas() {
+    ctCtx.setTransform(1, 0, 0, 1, 0, 0);
     ctCtx.clearRect(0, 0, ctCanvas.width, ctCanvas.height);
   }
 
-  function loadCtSlice(idx, cacheBust) {
-    const url = "/slice_bg/" + idx + "?_=" + cacheBust;
+  function drawCt() {
+    if (!ctImage) return;
+
+    const imgW = ctImage.width;
+    const imgH = ctImage.height;
+
+    clearCtCanvas();
+    applyViewTransform(ctCtx, imgW, imgH);
+    ctCtx.drawImage(ctImage, 0, 0);
+
+    // reset for safety
+    ctCtx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  function loadCtSlice(idx) {
+    const url = "/slice_bg/" + idx + "?_=" + Date.now();
     const img = new Image();
 
     img.onload = function () {
-      // Make CT canvas match image pixels exactly
+      ctImage = img;
+      ctKey = idx;
+
+      // Keep canvases same size and aligned
       ctCanvas.width = img.width;
       ctCanvas.height = img.height;
 
-      clearCtCanvas();
-      ctCtx.drawImage(img, 0, 0);
+      maskCanvas.width = img.width;
+      maskCanvas.height = img.height;
+
+      drawCt();
+      // If mask already loaded for this z/label, redraw it too under new sizes
+      drawMask();
     };
 
     img.src = url;
@@ -166,7 +260,6 @@
 
   function render() {
     const idx = viewState.z;
-
     if (idx === null) return;
 
     if (isNaN(idx) || idx < 0 || idx >= numSlices) {
@@ -175,23 +268,32 @@
     }
     sliceError.textContent = "";
 
-    const cacheBust = Date.now();
-
-    // Keep input in sync with state
+    // Keep UI in sync with state
     sliceInput.value = idx;
-    
-    // Background CT slice
-    loadCtSlice(idx, cacheBust);
+    if (zoomInput) zoomInput.value = viewState.zoom;
+    if (panXInput) panXInput.value = viewState.panX;
+    if (panYInput) panYInput.value = viewState.panY;
 
-    // Mask overlay
-    loadMaskSlice(idx, cacheBust);
+    // CT: only fetch if slice changed, otherwise just redraw (for zoom/pan)
+    if (ctKey !== idx || !ctImage) {
+      loadCtSlice(idx);
+    } else {
+      drawCt();
+    }
+
+    // Mask: fetch only if (z,label) changed, otherwise redraw
+    loadMaskSlice(idx);
   }
+
 
 
   function initStateFromUI() {
     const initialZ = clampZ(parseInt(sliceInput.value, 10) || 0);
     viewState.z = initialZ;
     viewState.labelId = labelSelect.value || "";
+    viewState.zoom = parseNum(zoomInput?.value, 0);
+    viewState.panX = parseNum(panXInput?.value, 0);
+    viewState.panY = parseNum(panYInput?.value, 0);
   }
 
   function updateBrushColorFromLabel() {
@@ -247,6 +349,8 @@
     window.MaskEditor.init({
       canvas: maskCanvas,
       modeIndicator: modeIndicator,
+      toImageCoords: canvasToImage,
+      getScale: getScale,
     });
   }
 
@@ -302,7 +406,33 @@
     // sync strokes (non-quiet so user knows something is happening),
     // then export to .npy
     sendStrokesToBackend(false, syncThenSave);
+    
   });
+
+  function parseNum(val, fallback = 0) {
+    const n = Number(val);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function onViewChange(patch) {
+    // Important: if user drew something, commit it before changing view
+    sendStrokesToBackend(true, function () {
+      setState(patch);
+    });
+  }
+
+  zoomInput.addEventListener("input", function () {
+    onViewChange({ zoom: parseNum(zoomInput.value, 0) });
+  });
+
+  panXInput.addEventListener("input", function () {
+    onViewChange({ panX: parseNum(panXInput.value, 0) });
+  });
+
+  panYInput.addEventListener("input", function () {
+    onViewChange({ panY: parseNum(panYInput.value, 0) });
+  });
+
 
   // Initial load (middle slice, no mask)
   window.addEventListener("load", function () {
