@@ -23,8 +23,18 @@
         position: absolute;
         top: 0;
         left: 0;
-        opacity: 0.47;
+        opacity: 0.5;
+        pointer-events: none;
       }
+
+      #strokesCanvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: auto; /* this is the interactive layer */
+        opacity: 0.5;           /* preview is drawn with its own alpha if desired */
+      }
+
       input[type="number"] {
         width: 100px;
       }
@@ -99,10 +109,9 @@
     </div>
 
     <div id="viewer">
-      <!-- background CT slice -->
       <canvas id="ctCanvas"></canvas>
-      <!-- overlay mask slice, now as canvas -->
       <canvas id="maskCanvas"></canvas>
+      <canvas id="strokesCanvas"></canvas>
     </div>
         
     <!-- inject numSlices into a global so external JS can use it -->
