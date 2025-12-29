@@ -1,11 +1,4 @@
 // static/js/viewer.js
-// 3-canvas architecture:
-// - ctCanvas: CT background PNG
-// - maskCanvas: backend mask PNG (opacity via CSS, pointer-events none)
-// - strokesCanvas: interactive layer, draws preview vectors every render
-//
-// Commits are per-stroke (one POST per stroke) via a queue, so Undo works per stroke.
-// Mask refresh is debounced to avoid fetching PNG on every stroke.
 
 (() => {
   "use strict";
@@ -89,6 +82,17 @@
 
       this.strokesCanvas.width = w;
       this.strokesCanvas.height = h;
+    }
+
+    imageToCanvas(viewState, xImg, yImg, imgW, imgH) {
+      const s = viewState.getScale();
+      const cw = this.ctCanvas.width;
+      const ch = this.ctCanvas.height;
+
+      const tx = cw / 2 + viewState.panX - (s * imgW) / 2;
+      const ty = ch / 2 + viewState.panY - (s * imgH) / 2;
+
+      return { x: s * xImg + tx, y: s * yImg + ty };
     }
 
     clearCt() {
@@ -210,6 +214,186 @@
     }
   }
 
+  class GestureController {
+    constructor(app) {
+      this.app = app; // ViewerApp
+      this.canvas = app.strokesCanvas;
+
+      this.pointers = new Map();  // pointerId -> {x,y} w canvas px
+      this.gestureActive = false;
+
+      this.startDist = 0;
+      this.startCenter = { x: 0, y: 0 };
+      this.startZoom = 0;
+      this.startPanX = 0;
+      this.startPanY = 0;
+
+      // bind
+      this._onPointerDown = this._onPointerDown.bind(this);
+      this._onPointerMove = this._onPointerMove.bind(this);
+      this._onPointerUp = this._onPointerUp.bind(this);
+      this._onWheel = this._onWheel.bind(this);
+    }
+
+    attach() {
+      // Pointer gestures (tablet/telefon)
+      this.canvas.addEventListener("pointerdown", this._onPointerDown, { passive: false });
+      this.canvas.addEventListener("pointermove", this._onPointerMove, { passive: false });
+      this.canvas.addEventListener("pointerup", this._onPointerUp, { passive: false });
+      this.canvas.addEventListener("pointercancel", this._onPointerUp, { passive: false });
+
+      // Touchpad / mysz
+      this.canvas.addEventListener("wheel", this._onWheel, { passive: false });
+    }
+
+    _getCanvasCoords(evt) {
+      const rect = this.canvas.getBoundingClientRect();
+      return {
+        x: (evt.clientX - rect.left) * (this.canvas.width / rect.width),
+        y: (evt.clientY - rect.top) * (this.canvas.height / rect.height),
+      };
+    }
+
+    _distance(p1, p2) {
+      const dx = p1.x - p2.x;
+      const dy = p1.y - p2.y;
+      return Math.hypot(dx, dy);
+    }
+
+    _center(p1, p2) {
+      return { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    }
+
+    _enterGestureMode() {
+      if (this.gestureActive) return;
+      this.gestureActive = true;
+
+      // blokujemy rysowanie
+      window.MaskEditor?.setBlocked?.(true);
+
+      const pts = Array.from(this.pointers.values());
+      this.startDist = this._distance(pts[0], pts[1]);
+      this.startCenter = this._center(pts[0], pts[1]);
+
+      this.startZoom = this.app.viewState.zoom;
+      this.startPanX = this.app.viewState.panX;
+      this.startPanY = this.app.viewState.panY;
+    }
+
+    _leaveGestureModeIfPossible() {
+      if (this.pointers.size === 0) {
+        this.gestureActive = false;
+        window.MaskEditor?.setBlocked?.(false);
+      }
+    }
+
+    _onPointerDown(evt) {
+      // jeżeli to dotyk / pen – gesty bierzemy przy >=2 pointerach
+      // mysz traktujemy normalnie (rysowanie), więc tu nie wchodzimy w gesty przy mouse
+      if (evt.pointerType === "mouse") return;
+
+      evt.preventDefault();
+      this.canvas.setPointerCapture?.(evt.pointerId);
+
+      const p = this._getCanvasCoords(evt);
+      this.pointers.set(evt.pointerId, p);
+
+      if (this.pointers.size === 2) {
+        this._enterGestureMode();
+      }
+    }
+
+    _onPointerMove(evt) {
+      if (evt.pointerType === "mouse") return;
+      if (!this.pointers.has(evt.pointerId)) return;
+
+      evt.preventDefault();
+      const p = this._getCanvasCoords(evt);
+      this.pointers.set(evt.pointerId, p);
+
+      if (!this.gestureActive || this.pointers.size < 2) return;
+
+      const pts = Array.from(this.pointers.values());
+      const dist = this._distance(pts[0], pts[1]);
+      const center = this._center(pts[0], pts[1]);
+
+      // Pan: przesunięcie środka dwóch palców
+      const dCx = center.x - this.startCenter.x;
+      const dCy = center.y - this.startCenter.y;
+
+      // Zoom: stosunek odległości
+      const ratio = dist / (this.startDist || dist);
+      const zoomDelta = Math.log2(ratio); // bo zoom jest w log2
+
+      this.app.viewState.zoom = this.startZoom + zoomDelta;
+      this.app.viewState.panX = this.startPanX + dCx;
+      this.app.viewState.panY = this.startPanY + dCy;
+
+      this.app._syncViewInputsFromState();
+      this.app.requestRender();
+    }
+
+    _onPointerUp(evt) {
+      if (evt.pointerType === "mouse") return;
+
+      evt.preventDefault();
+      this.pointers.delete(evt.pointerId);
+
+      // wychodzimy z gestów dopiero jak wszystkie palce puszczone
+      if (this.pointers.size < 2) {
+        // dalej blokujemy rysowanie aż do 0 pointerów,
+        // żeby nie zaczęło rysować "w połowie" gestu
+        this._leaveGestureModeIfPossible();
+      }
+    }
+
+    _onWheel(evt) {
+      // Touchpad: wheel służy do pan, a ctrl+wheel do zoom (pinch często generuje ctrlKey)
+      evt.preventDefault();
+
+      const x = evt.offsetX * (this.canvas.width / this.canvas.clientWidth);
+      const y = evt.offsetY * (this.canvas.height / this.canvas.clientHeight);
+
+      if (evt.ctrlKey) {
+        this._zoomAroundCanvasPoint(-evt.deltaY * 0.002, x, y);  // czułość do dopasowania
+      } else {
+        // Pan: przesuwamy widok. Znaki mogą wymagać odwrócenia w zależności od systemu.
+        this.app.viewState.panX -= evt.deltaX;
+        this.app.viewState.panY -= evt.deltaY;
+      }
+
+      this.app._syncViewInputsFromState();
+      this.app.requestRender();
+    }
+
+    _zoomAroundCanvasPoint(dZoom, xCanvas, yCanvas) {
+      const app = this.app;
+      const vs = app.viewState;
+
+      const imgW = app.imgW || app.ctCanvas.width;
+      const imgH = app.imgH || app.ctCanvas.height;
+
+      // punkt obrazu pod kursorem przed zmianą zoom
+      const pImg = app.renderer.canvasToImage(vs, xCanvas, yCanvas, imgW, imgH);
+
+      const oldZoom = vs.zoom;
+      vs.zoom = vs.zoom + dZoom;
+
+      // gdzie ten sam punkt obrazu wyląduje po zmianie zoom?
+      const pCanvasAfter = app.renderer.imageToCanvas(vs, pImg.x, pImg.y, imgW, imgH);
+
+      // chcemy, żeby został pod kursorem => korygujemy pan
+      const dx = xCanvas - pCanvasAfter.x;
+      const dy = yCanvas - pCanvasAfter.y;
+      vs.panX += dx;
+      vs.panY += dy;
+
+      // opcjonalnie: clamp zoom
+      // vs.zoom = Math.max(-3, Math.min(4, vs.zoom));
+    }
+  }
+
+
   class ViewerApp {
     constructor() {
       this.numSlices = window.numSlices;
@@ -273,6 +457,8 @@
       // Debounced mask refresh + preview cleanup
       this._maskRefreshScheduled = false;
       this._committedSinceLastRefresh = 0;
+
+      this.gestures = new GestureController(this);
     }
 
     init() {
@@ -282,6 +468,8 @@
 
       this.requestRender();
       this._updateBrushColorFromLabel();
+
+      this.gestures.attach();
     }
 
     requestRender() {
@@ -370,6 +558,12 @@
           this._setStatus("Disk save failed", "red");
         }
       });
+    }
+
+    _syncViewInputsFromState() {
+      this.zoomInput.value = String(this.viewState.zoom);
+      this.panXInput.value = String(this.viewState.panX);
+      this.panYInput.value = String(this.viewState.panY);
     }
 
     _initMaskEditor() {

@@ -19,6 +19,7 @@
       #ctCanvas {
         display: block; 
       }
+
       #maskCanvas {
         position: absolute;
         top: 0;
@@ -33,6 +34,7 @@
         left: 0;
         pointer-events: auto; /* this is the interactive layer */
         opacity: 0.5;           /* preview is drawn with its own alpha if desired */
+        touch-action: none;
       }
 
       input[type="number"] {

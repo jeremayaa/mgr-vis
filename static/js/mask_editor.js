@@ -50,6 +50,10 @@
       this._onPointerDown = this._onPointerDown.bind(this);
       this._onPointerMove = this._onPointerMove.bind(this);
       this._onPointerUp = this._onPointerUp.bind(this);
+
+      // block drawing on simultaneous click
+      this.blocked = false;
+      this.activePointerId = null;
     }
 
     /**
@@ -74,6 +78,18 @@
       this.setMode("pen");
       this._attachEvents();
     }
+
+    setBlocked(flag) {
+      this.blocked = !!flag;
+      if (this.blocked) {
+        // anuluj ewentualny stroke w trakcie
+        this.isDrawing = false;
+        this.currentStroke = null;
+        this.activePointerId = null;
+        this._notifyChange();
+      }
+    }
+
 
     /** @param {"pen"|"rubber"|"lasso_pen"|"lasso_rubber"} newMode */
     setMode(newMode) {
@@ -159,6 +175,11 @@
 
     /** @param {PointerEvent} evt */
     _onPointerDown(evt) {
+      if (this.blocked) return;
+
+      if (this.activePointerId !== null) return;   // drugi palec ignorujemy
+      this.activePointerId = evt.pointerId;
+
       if (!this.canvas) return;
       evt.preventDefault();
 
@@ -183,6 +204,7 @@
 
     /** @param {PointerEvent} evt */
     _onPointerMove(evt) {
+      if (this.blocked) return;
       if (!this.isDrawing || !this.currentStroke) return;
       evt.preventDefault();
 
@@ -195,6 +217,7 @@
 
     /** @param {PointerEvent} evt */
     _onPointerUp(evt) {
+      if (this.blocked) return;
       if (!this.isDrawing) return;
       evt.preventDefault();
       this.isDrawing = false;
@@ -214,6 +237,8 @@
       if (typeof this.onStrokeEnd === "function") {
         this.onStrokeEnd(finished);
       }
+
+      this.activePointerId = null;
     }
   }
 
